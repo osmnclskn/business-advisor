@@ -83,11 +83,6 @@ class RedisCache:
 
 @lru_cache(maxsize=1)
 def get_redis_cache() -> RedisCache:
-    """
-    Singleton RedisCache instance.
-    
-    lru_cache thread-safe - race condition yok.
-    """
     settings = get_settings()
     return RedisCache(settings.redis_url)
 
