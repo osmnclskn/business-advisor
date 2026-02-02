@@ -1,7 +1,5 @@
-# app/agents/discovery.py
 
 import json
-
 from app.agents.base import BaseAgent
 from app.config import get_settings
 from app.llm import get_discovery_llm
@@ -10,24 +8,6 @@ from app.utils import clean_llm_json_response
 
 
 class DiscoveryAgent(BaseAgent):
-    """
-    Problem keşfi için multi-turn soru-cevap yürütür.
-
-    PDF'deki görevler:
-    1. En az 3 ana soru sor (config'den ayarlanabilir)
-    2. Müşteri cevaplarına göre follow-up üret
-    3. Çözüm önerme, sadece anla
-    4. Sonunda 4 çıktı üret: stated_problem, identified_problem, hidden_risk, summary
-
-    Claude 3.5 Sonnet tercih edildi çünkü:
-    - Multi-turn context'i en iyi koruyan model
-    - Follow-up sorularda tutarlılık
-    - Türkçe doğal diyalog kalitesi
-
-    Sync metodlar: Celery worker ve test için
-    Async metodlar: FastAPI endpoint'leri için
-    """
-
     def __init__(self):
         super().__init__(llm=get_discovery_llm())
         settings = get_settings()

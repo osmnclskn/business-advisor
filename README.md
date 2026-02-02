@@ -1,28 +1,14 @@
 # Business Advisor API
 
-Çok ajanlı iş danışmanlığı sistemi. İş problemlerini analiz eder, kök nedenleri tespit eder, aksiyon planı oluşturur ve risk değerlendirmesi yapar.
+İş problemlerini analiz eden çok ajanlı sistem. Kullanıcı bir sorun bildiriyor, sistem sorular sorup kök nedeni buluyor, sonra aksiyon planı ve risk analizi çıkarıyor.
 
-## İçindekiler
+## Ne Yapıyor?
 
-- [Özellikler](#özellikler)
-- [Mimari](#mimari)
-- [Agent Akışı](#agent-akışı)
-- [LLM Seçimleri](#llm-seçimleri)
-- [Prompt Mühendisliği](#prompt-mühendisliği)
-- [Kurulum](#kurulum)
-- [API Kullanımı](#api-kullanımı)
-- [Örnek Senaryo](#örnek-senaryo)
-- [Test](#test)
-- [Deployment](#deployment)
-- [Geliştirme Notları](#geliştirme-notları)
+Üç tip sorguyu işliyor:
 
-## Özellikler
-
-- 6 aşamalı analiz pipeline'ı
-- Multi-turn konuşma desteği
-- Asenkron task işleme (Celery)
-- Rate limiting
-- Structured JSON çıktılar
+- **Sektör soruları** → Tavily ile araştırma, kaynaklı cevap
+- **İş problemleri** → 3-5 tur soru-cevap, detaylı analiz raporu  
+- **Konu dışı** → Kibarca reddediyor
 
 ## Mimari
 
@@ -30,115 +16,180 @@
 
 ![Business Advisor System Architecture](docs/architecture.png)
 
-Diyagram şu bileşenleri göstermektedir:
-
-| Katman | Renk | Bileşenler |
-|--------|------|------------|
-| **API Layer** | Sarı | FastAPI :8000, Endpoints, SlowAPI Rate Limiting, Pydantic Validation, Error Handler |
-| **Redis Layer** | Kırmızı | Session Store, Task Queue, Task Results, Rate Limits |
-| **Background Processing** | Yeşil | Celery Worker (concurrency: 4, timeout: 5min) |
-| **LangGraph Workflow** | Mor | 6 Agent Pipeline + Tavily Research API |
-| **Data Layer** | Mavi | MongoDB :27017 (conversations, checkpoints, sessions) |
-
-### Basit Akış
 ```
-┌─────────────┐
-│ API Consumer│
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────┐     ┌─────────────┐     ┌─────────────┐
-│  FastAPI + Rate │────▶│    Redis    │────▶│   Celery    │
-│    Limiting     │     │   (Queue)   │     │   Worker    │
-└─────────────────┘     └─────────────┘     └──────┬──────┘
-                                                   │
-                                                   ▼
-                                            ┌─────────────┐
-                                            │  LangGraph  │
-                                            │  Workflow   │
-                                            └──────┬──────┘
-                                                   │
-                                                   ▼
-                                            ┌─────────────┐
-                                            │   MongoDB   │
-                                            └─────────────┘
+                                ┌─────────────┐
+                                │   CLIENT    │
+                                └──────┬──────┘
+                                       │
+                          ┌────────────┴────────────┐
+                          │      1. POST /execute   │
+                          │      2. GET /tasks/{id} │
+                          ▼                         │
+                ┌───────────────────┐               │
+                │  FastAPI Server   │               │
+                │   (Port 8000)     │               │
+                │   + SlowAPI       │               │
+                └─────────┬─────────┘               │
+                          │                         │
+       ┌──────────────────┼──────────────────┐      │
+       │                  │                  │      │
+       ▼                  ▼                  ▼      │
+┌─────────────────┐  ┌─────────────┐  ┌─────────────┐│
+│     Redis       │  │   Redis     │  │   Redis     ││
+│  Session Store  │  │Task Queue   │  │Task Results ││
+│   (DB 0)        │  │  (Celery)   │  │  (Celery)   ││
+│                 │  │             │  │             ││
+│ • session_id    │  │ • pending   │  │ • completed │◄┘
+│ • conversation  │  │   tasks     │  │   results   │
+│ • TTL: 1 hour   │  │             │  │ • TTL: 1hr  │
+│ • rate limits   │  │             │  │             │
+└─────────────────┘  └──────┬──────┘  └─────────────┘
+                            │
+                            ▼
+                  ┌───────────────────┐
+                  │   Celery Worker   │
+                  │                   │
+                  │ • concurrency: 4  │
+                  │ • timeout: 5min   │
+                  └─────────┬─────────┘
+                            │
+                            ▼
+                  ┌───────────────────┐
+                  │ LangGraph Workflow│
+                  │                   │
+                  │ ┌───────────────┐ │
+                  │ │  Peer Agent   │ │
+                  │ │  (GPT-5.1)    │ │
+                  │ └───────┬───────┘ │
+                  │         │         │
+                  │    ┌────┴────┐    │
+                  │    ▼         ▼    │
+                  │ ┌─────┐ ┌───────┐ │
+                  │ │Info │ │Problem│ │
+                  │ │Flow │ │ Flow  │ │
+                  │ └──┬──┘ └───┬───┘ │
+                  │    │        │     │
+                  │    ▼        ▼     │
+                  │ ┌─────┐ ┌───────┐ │
+                  │ │Tavily│ │Discov.│ │
+                  │ │Rsch │ │Agent  │ │
+                  │ └─────┘ │(Claude)│ │
+                  │         └───┬───┘ │
+                  │             │     │
+                  │             ▼     │
+                  │        ┌───────┐  │
+                  │        │Struct.│  │
+                  │        │Agent  │  │
+                  │        │(Gemini)│ │
+                  │        └───────┘  │
+                  └─────────┬─────────┘
+                            │
+                            ▼
+                  ┌───────────────────┐
+                  │     MongoDB       │
+                  │                   │
+                  │ • Conversation    │
+                  │   Logs            │
+                  │ • LangGraph       │
+                  │   Checkpoints     │
+                  └───────────────────┘
 ```
 
 ### Neden Asenkron?
 
-LLM çağrıları ve web araştırması 30-60 saniye sürebilir. Senkron işlemde HTTP timeout riski var. Celery ile task queue'ya atılır, client polling ile sonucu alır.
+İlk versiyonda senkron denedim. Tavily araştırması 30-40 saniye, üstüne LLM çağrıları eklenince 1-2 dakika. HTTP timeout kaçınılmaz oldu.
+
+Celery ile queue'ya atıyorum, client polling yapıyor. Kullanıcı "işleniyor" görüyor, sayfa donmuyor.
+
+```
+Senkron (sorunlu):
+Client ──► API ──► LLM (10sn) ──► Tavily (40sn) ──► Response
+                   └──────────── HTTP Timeout ────────────┘
+
+Asenkron (çözüm):
+Client ──► API ──► Redis Queue ──► task_id döner (50ms)
+                        │
+                        ▼
+                  Celery Worker (arka planda çalışır)
+                        │
+                        ▼
+Client ◄─── GET /tasks/{id} ile polling
+```
 
 ### Servisler
 
-| Servis | Port | Rol |
-|--------|------|-----|
-| FastAPI | 8000 | REST API |
-| Redis | 6379 | Queue, session, rate limit |
-| MongoDB | 27017 | Log, checkpoint |
-| Celery | - | Background worker |
+- **FastAPI** (8000): REST API, rate limiting
+- **Redis** (6379): Queue + session store + rate limit backend
+- **MongoDB** (27017): Conversation log + LangGraph checkpoint
+- **Celery**: Background worker
 
-### Neden MongoDB?
-
-PostgreSQL yerine MongoDB tercih edildi:
-
-- **Document model:** Conversation data'sı doğal olarak nested JSON yapısında. Her turn, her agent çıktısı iç içe document olarak saklanıyor. Relational model'de bu 5-6 tablo ve JOIN gerektirir.
-- **Esnek schema:** Agent'lar geliştikçe çıktı yapıları değişiyor. MongoDB'de migration yapmadan yeni field eklenebilir.
-- **LangGraph entegrasyonu:** `langgraph-checkpoint-mongodb` paketi hazır. PostgreSQL için manuel implementasyon gerekir.
-- **Okuma ağırlıklı:** Bu sistemde yazma az, okuma çok. MongoDB'nin replica set'leri ile okuma scale edilebilir.
-
-### Neden Redis?
-
-Tek Redis instance üç farklı iş görüyor:
-
-- **Session store:** Multi-turn conversation state'i (TTL: 1 saat)
-- **Celery broker:** Task queue
-- **Rate limiting:** SlowAPI backend'i (multi-instance uyumlu)
-
-Memcached alternatifti ama rate limiting için sorted set gibi veri yapıları gerekti, Redis bunu native destekliyor.
+Redis'i üç iş için kullanıyorum - ayrı servis kurmak yerine tek Redis daha basit.
 
 ## Agent Akışı
+
 ```
-User Input
-    │
-    ▼
-┌─────────┐
-│  Peer   │──▶ business_info ──▶ Tavily Research ──▶ Cevap + Kaynaklar
-│ (GPT)   │
-└────┬────┘──▶ non_business ──▶ Kibarca Reddet
-     │
-     │ business_problem
-     ▼
-┌───────────┐
-│ Discovery │ ◀──▶ 5 tur soru-cevap
-│ (Claude)  │
-└─────┬─────┘
-      │
-      ▼
-┌─────────────┐
-│ Structuring │──▶ Problem Ağacı
-│  (Gemini)   │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│ ActionPlan  │──▶ Kısa/Orta/Uzun Vade Aksiyonlar
-│  (Gemini)   │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│    Risk     │──▶ Risk Analizi + Mitigation
-│  (Claude)   │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│   Report    │──▶ Executive Summary + Markdown Rapor
-│   (GPT)     │
-└─────────────┘
+                         ┌─────────────────┐
+                         │   User Input    │
+                         └────────┬────────┘
+                                  │
+                                  ▼
+                         ┌─────────────────┐
+                         │   Peer Agent    │
+                         │   (GPT-5.1)     │
+                         │   temp: 0.3     │
+                         └────────┬────────┘
+                                  │
+                    ┌─────────────┼─────────────┐
+                    │             │             │
+                    ▼             ▼             ▼
+            ┌───────────┐ ┌───────────┐ ┌───────────┐
+            │  business │ │  business │ │    non    │
+            │   _info   │ │  _problem │ │ _business │
+            └─────┬─────┘ └─────┬─────┘ └─────┬─────┘
+                  │             │             │
+                  ▼             │             ▼
+            ┌───────────┐       │       ┌───────────┐
+            │  Tavily   │       │       │  Polite   │
+            │ Research  │       │       │ Rejection │
+            └─────┬─────┘       │       └───────────┘
+                  │             │
+                  ▼             ▼
+            ┌───────────┐ ┌───────────┐
+            │  Report   │ │ Discovery │
+            │ + Sources │ │   Agent   │
+            └───────────┘ │(Claude 4.5)│
+                          │ temp: 0.7 │
+                          └─────┬─────┘
+                                │
+                                │ 3-5 turns Q&A
+                                │
+                                ▼
+                          ┌───────────┐
+                          │Structuring│
+                          │(Gemini 2.5)│
+                          └─────┬─────┘
+                                │
+                                ▼
+                          ┌───────────┐
+                          │ActionPlan │
+                          │(Gemini 2.5)│
+                          └─────┬─────┘
+                                │
+                                ▼
+                          ┌───────────┐
+                          │   Risk    │
+                          │(Claude 4.5)│
+                          └─────┬─────┘
+                                │
+                                ▼
+                          ┌───────────┐
+                          │  Report   │
+                          │ (GPT-5.1) │
+                          └───────────┘
 ```
 
 ### Çıktı Yapısı
+
 ```
 ├── discovery_output
 │   ├── customer_stated_problem
@@ -167,38 +218,46 @@ User Input
     └── report_markdown
 ```
 
-## LLM Seçimleri
+### Model Seçimleri
 
-| Agent | Model | Temp | Görev |
-|-------|-------|------|-------|
-| Peer | GPT-5.1 | 0.3 | Intent sınıflandırma |
-| Discovery | Claude Sonnet 4.5 | 0.7 | Problem keşfi (5 tur) |
-| Structuring | Gemini 2.5 Flash | 0.5 | Problem ağacı |
-| ActionPlan | Gemini 2.5 Flash | 0.6 | Aksiyon planı |
-| Risk | Claude Sonnet 4.5 | 0.5 | Risk değerlendirme |
-| Report | GPT-5.1 | 0.4 | Rapor oluşturma |
+| Agent | Model | Temp | Neden? |
+|-------|-------|------|--------|
+| Peer | GPT-5.1 | 0.3 | Sınıflandırmada tutarlı, %98 accuracy |
+| Discovery | Claude Sonnet 4.5 | 0.7 | Multi-turn'de context kaybetmiyor |
+| Structuring | Gemini 2.5 Flash | 0.5 | JSON output'ta hızlı ve schema'ya sadık |
+| ActionPlan | Gemini 2.5 Flash | 0.6 | Maliyet-performans dengesi iyi |
+| Risk | Claude Sonnet 4.5 | 0.5 | Reasoning kalitesi önemli |
+| Report | GPT-5.1 | 0.4 | Markdown formatting kalitesi yüksek |
 
-### Neden Bu Modeller?
+**Neden bu dağılım?**
 
-Her agent için model seçimi, o görevin doğasına göre yapıldı:
+- **GPT-5.1 (Peer, Report):** Classification ve formatting task'larında tutarlı. Peer'da aynı input aynı intent vermeli.
+- **Claude Sonnet 4.5 (Discovery, Risk):** 5 tur boyunca önceki cevapları hatırlayıp ilişkili sorular üretiyor. Risk'te reasoning kalitesi kritik.
+- **Gemini 2.5 Flash (Structuring, ActionPlan):** Nested JSON yapılarda schema'ya sadık. Bu iki agent sık çağrılıyor, Gemini ~3x ucuz.
 
-**GPT-5.1 (Peer, Report):** Classification ve formatting task'larında tutarlı. Peer agent'ta intent sınıflandırma %98 accuracy ile çalışıyor. Report agent'ta markdown formatting kalitesi yüksek.
+**Temperature seçimleri:**
+- 0.3: Deterministic olmalı (classification)
+- 0.5: Dengeli (analysis)
+- 0.6-0.7: Yaratıcı sorular ve öneriler için
 
-**Claude Sonnet 4.5 (Discovery, Risk):** Multi-turn conversation'da context'i kaybetmiyor. Discovery agent 5 tur boyunca önceki cevapları hatırlayıp ilişkili sorular üretiyor. Risk agent'ta reasoning kalitesi önemli, Claude burada güçlü.
+### Tavily: Search vs Research
 
-**Gemini 2.5 Flash (Structuring, ActionPlan):** Structured JSON output'ta hızlı ve tutarlı. Problem ağacı gibi nested yapılarda schema'ya sadık kalıyor. Maliyet-performans dengesi iyi.
+İki mod var:
 
-### Temperature Seçimleri
+| Özellik | Search | Research |
+|---------|--------|----------|
+| Süre | 1-3 saniye | 30-40 saniye |
+| Kaynak | 3-5 | 20+ |
+| Çıktı | Kısa snippet | Detaylı Markdown |
 
-- **0.3 (Peer):** Deterministic olmalı, aynı input aynı intent vermeli
-- **0.5 (Structuring, Risk):** Dengeli, yaratıcılık ve tutarlılık arası
-- **0.6-0.7 (Discovery, ActionPlan):** Yaratıcı sorular ve öneriler için
+Research tercih ettim. Evet yavaş, ama resmi kaynaklar ve istatistikler getiriyor. Zaten Celery'de çalışıyor, 30-40 saniye sorun değil.
 
 ## Prompt Mühendisliği
 
 Promptlar `app/prompts/` altında YAML formatında tutuluyor. Kod değişikliği yapmadan prompt güncellenebilir.
 
 ### Prompt Dosya Yapısı
+
 ```yaml
 system: |
   [Rol tanımı]
@@ -217,6 +276,7 @@ max_tokens: 1000
 ### Kullanılan Teknikler
 
 **Few-shot Learning:** Her prompt'ta 2-3 örnek var. Model ne yapacağını açıklamadan değil, örnekten öğreniyor.
+
 ```yaml
 # Örnek: peer_classify.yaml
 system: |
@@ -235,6 +295,7 @@ system: |
 ```
 
 **Chain-of-thought:** Karmaşık görevlerde adım adım düşünme.
+
 ```yaml
 # Discovery agent'ta reasoning
 system: |
@@ -247,6 +308,7 @@ system: |
 ```
 
 **Structured Output:** JSON schema ile çıktı formatı zorlama.
+
 ```yaml
 # Structuring agent JSON output
 system: |
@@ -261,6 +323,7 @@ system: |
 ```
 
 **Negative Examples:** Yapılmaması gerekenleri gösterme.
+
 ```yaml
 system: |
   YAPMA:
@@ -276,163 +339,281 @@ system: |
 - **Kolay test:** Farklı prompt versiyonları A/B test edilebilir
 - **Non-technical edit:** Prompt'ları düzenlemek için Python bilmek gerekmiyor
 
+## Prompt Mühendisliği
+
+Promptlar `app/prompts/` altında YAML formatında tutuluyor. Kod değişikliği yapmadan prompt güncellenebilir.
+
+### Prompt Dosya Yapısı
+
+```yaml
+system: |
+  [Rol tanımı]
+  [Görev açıklaması]
+  [Kısıtlamalar]
+  [Few-shot örnekler]
+
+user: |
+  [Input template - {variable} formatında]
+  [Output format talimatı]
+
+temperature: 0.5
+max_tokens: 1000
+```
+
+### Kullanılan Teknikler
+
+**Few-shot Learning:** Her prompt'ta 2-3 örnek var. Model ne yapacağını açıklamadan değil, örnekten öğreniyor.
+
+```yaml
+# Örnek: peer_classify.yaml
+system: |
+  Kullanıcı mesajlarını kategorize et.
+  
+  ÖRNEKLER:
+  
+  Kullanıcı: "Rakiplerimiz kimler?"
+  Kategori: business_info
+  
+  Kullanıcı: "Satışlar düşüyor"
+  Kategori: business_problem
+  
+  Kullanıcı: "Hava nasıl?"
+  Kategori: non_business
+```
+
+**Chain-of-thought:** Karmaşık görevlerde adım adım düşünme.
+
+```yaml
+# Discovery agent'ta reasoning
+system: |
+  Önce düşün:
+  1. Müşteri ne söyledi?
+  2. Hangi bilgi eksik?
+  3. Bu bilgiyi almak için en iyi soru ne?
+  
+  Sonra soruyu yaz.
+```
+
+**Structured Output:** JSON schema ile çıktı formatı zorlama.
+
+```yaml
+# Structuring agent JSON output
+system: |
+  ÇIKTI FORMATI (sadece JSON):
+  {
+    "problem_type": "Growth|Cost|Operational|...",
+    "main_problem": "string",
+    "problem_tree": [
+      {"main_cause": "string", "sub_causes": ["string"]}
+    ]
+  }
+```
+
+**Negative Examples:** Yapılmaması gerekenleri gösterme.
+
+```yaml
+system: |
+  YAPMA:
+  - Çözüm önerme (sadece soru sor)
+  - Birden fazla soru sorma
+  - Kullanıcıyı yönlendirme
+```
+
+### Neden YAML?
+
+- **Versiyon kontrolü:** Prompt değişiklikleri git history'de görünür
+- **Kod ayrımı:** Prompt mantığı Python'dan bağımsız
+- **Kolay test:** Farklı prompt versiyonları A/B test edilebilir
+- **Non-technical edit:** Prompt'ları düzenlemek için Python bilmek gerekmiyor
+
+## Rate Limiting
+
+SlowAPI kullanıyorum, Redis backend'li:
+
+| Endpoint | Limit | Gerekçe |
+|----------|-------|---------|
+| `POST /v1/agent/execute` | 20/dakika | Her istek LLM maliyeti |
+| `GET /v1/tasks/{id}` | 60/dakika | Polling için yeterli |
+| `GET /v1/sessions/{id}` | 30/dakika | Debug için |
+
+## Loglama
+
+İki katman var:
+
+**1. stdout (anlık debug için)**
+
+Development'ta okunabilir format:
+```
+14:23:17 | INFO     | advisor [session=abc, agent=peer] | Task completed
+```
+
+Docker'da (`APP_ENV=production`) JSON format:
+```json
+{"timestamp": "2026-02-02T11:00:34.063151+00:00", "level": "INFO", "logger": "advisor", "message": "Task completed - intent: business_problem", "session_id": "c058ccb4-99fd-43c3-bc47-90f2b9666993", "agent": "worker"}
+```
+
+**2. MongoDB (analiz için)**
+
+Tamamlanan conversation'lar `conversations` collection'ına yazılıyor. Worker'da `_persist_completed_session()` fonksiyonu bunu yapıyor.
+
 ## Kurulum
 
-### Gereksinimler
-
-- Python 3.12+
-- Docker & Docker Compose
-- Poetry
-
-### Adımlar
 ```bash
-git clone https://github.com/username/business-advisor.git
+git clone https://github.com/osmnclskn/business-advisor.git
 cd business-advisor
-
 cp .env.example .env
-# .env dosyasını düzenle (API key'ler)
-
+# API key'leri .env'e ekle
 docker compose up -d --build
 ```
 
+Health check:
+```bash
+curl http://localhost:8000/health
+```
+
 ### Environment Variables
+
 ```env
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 GOOGLE_API_KEY=AI...
 TAVILY_API_KEY=tvly-...
-
 MONGODB_URI=mongodb://localhost:27017
 REDIS_URL=redis://localhost:6379/0
 ```
 
-### Health Check
-```bash
-curl http://localhost:8000/health
-```
+## API
 
-## API Kullanımı
+| Endpoint | Açıklama |
+|----------|----------|
+| `POST /v1/agent/execute` | Task gönder |
+| `GET /v1/tasks/{id}` | Sonuç sorgula (polling) |
+| `GET /v1/sessions/{id}` | Session durumu |
+| `GET /health` | Sağlık kontrolü |
 
-### Endpoint'ler
+## Örnek Kullanım
 
-| Method | Endpoint | Açıklama |
-|--------|----------|----------|
-| POST | `/v1/agent/execute` | Task gönder |
-| GET | `/v1/tasks/{task_id}` | Sonuç sorgula |
-| GET | `/v1/sessions/{session_id}` | Session durumu |
-| GET | `/health` | Sağlık kontrolü |
+### İş dışı soru
 
-### Rate Limit
-
-| Endpoint | Limit | Gerekçe |
-|----------|-------|---------|
-| `/v1/agent/execute` | 20/dakika | Her istek LLM API çağrısı |
-| `/v1/tasks/{id}` | 60/dakika | Polling için yeterli |
-| `/v1/sessions/{id}` | 30/dakika | Debug amaçlı |
-
-## Örnek Senaryo
-
-### Non-Business
 ```bash
 curl -X POST http://localhost:8000/v1/agent/execute \
   -H "Content-Type: application/json" \
   -d '{"task": "Bugün hava nasıl?"}'
 ```
+
 ```json
 {
-  "intent": "non_business",
-  "message": "Bu sistem iş problemleri için tasarlandı...",
-  "is_complete": true
+  "task_id": "99c812dd-6a82-407d-a4d9-56193dd307b5",
+  "session_id": "bce84a41-7ef5-4639-8265-bb6267545fa4",
+  "status": "pending"
 }
 ```
 
-### Business Info
+```bash
+curl http://localhost:8000/v1/tasks/99c812dd-6a82-407d-a4d9-56193dd307b5
+```
+
+```json
+{
+  "status": "completed",
+  "result": {
+    "intent": "non_business",
+    "message": "Bu sistem iş problemleri için tasarlandı. Hava durumunu iş perspektifinden ele alabilirim...",
+    "is_complete": true
+  }
+}
+```
+
+### Sektör araştırması
+
 ```bash
 curl -X POST http://localhost:8000/v1/agent/execute \
   -H "Content-Type: application/json" \
-  -d '{"task": "Türkiye e-ticaret sektöründe öne çıkan şirketler hangileri?"}'
+  -d '{"task": "Türkiye e-ticaret sektöründe en büyük 5 şirket?"}'
 ```
 
-Tavily Research API ile detaylı rapor döner (20+ kaynak, market share verileri, inline citation'lar).
+30-40 saniye sonra detaylı rapor döner - Trendyol, Hepsiburada, Amazon TR, n11, Getir sıralamasıyla, kaynaklı.
 
-### Business Problem (Full Cycle)
+### İş problemi (full cycle)
 
-**1. Başlangıç:**
-```json
-POST /v1/agent/execute
-{"task": "Müşteri şikayetleri son 6 ayda çok arttı"}
+```bash
+# 1. Problem bildir
+curl -X POST .../execute -d '{"task": "Müşteri şikayetleri son 6 ayda %40 arttı"}'
+# Sistem soruyor: "Şikayetler hangi konuda?"
+
+# 2. Cevap ver (session_id ile)
+curl -X POST .../execute -d '{"task": "Teslimat gecikmeleri", "session_id": "..."}'
+# Sistem soruyor: "Gecikmelerin kaynağı nedir?"
+
+# ... 3-5 tur sonra tam analiz çıkıyor
 ```
-
-**2. Discovery (5 tur):**
-
-| Tur | Soru | Cevap |
-|-----|------|-------|
-| 1 | Şikayetler hangi konularda? | Teslimat ve kalite |
-| 2 | Bunlar bağlantılı mı? | Evet, yeni tedarikçiden sonra |
-| 3 | Tedarikçi geçişi nasıl oldu? | Hızlı karar, kalite kontrol yok |
-| 4 | Kim karar verdi? | Satın alma ve CFO |
-| 5 | Ne kaçırıldı? | Kapasite, sertifikalar |
-
-Her turda `session_id` ile devam edilir:
-```json
-POST /v1/agent/execute
-{
-  "task": "Teslimat ve kalite konusunda",
-  "session_id": "9a4cef44-..."
-}
-```
-
-**3. Final Çıktı:**
 
 <details>
-<summary>Tam Response</summary>
+<summary>Tam çıktı örneği</summary>
+
 ```json
 {
   "discovery_output": {
-    "customer_stated_problem": "Müşteri şikayetleri arttı",
-    "identified_business_problem": "Tedarikçi geçişinde due diligence yapılmadı",
-    "hidden_root_risk": "Departmanlar arası iletişim kopukluğu"
+    "customer_stated_problem": "Müşteri şikayetleri son 6 ayda %40 arttı",
+    "identified_business_problem": "Depo düzeni ve envanter sistemi yetersizliği nedeniyle sipariş hazırlama 2-3 güne uzamış",
+    "hidden_root_risk": "Envanter sisteminin gerçek stok durumunu yansıtmaması",
+    "conversation_turns": [
+      {"question": "Şikayetler hangi konuda?", "answer": "Teslimat gecikmeleri", "turn_number": 1},
+      {"question": "Gecikme kaynağı?", "answer": "Kendi depomuz", "turn_number": 2}
+    ]
   },
   "problem_tree": {
     "problem_type": "hybrid",
-    "main_problem": "Müşteri Şikayetlerinde Artış",
+    "main_problem": "Müşteri Şikayetlerinde %40 Artış",
     "problem_tree": [
-      {"main_cause": "Yetersiz Tedarikçi Yönetimi", "sub_causes": ["..."]},
-      {"main_cause": "Hatalı Karar Alma", "sub_causes": ["..."]},
-      {"main_cause": "İletişim Eksikliği", "sub_causes": ["..."]}
+      {"main_cause": "Envanter Yönetimi", "sub_causes": ["Sistem güncel değil", "Fiziksel sayım yok"]},
+      {"main_cause": "Depo Verimsizliği", "sub_causes": ["Kötü yerleşim", "Picking yavaş"]}
     ]
   },
   "action_plan": {
-    "short_term": ["Acil kalite kontrol", "Haftalık koordinasyon"],
-    "mid_term": ["Due diligence süreci", "Alternatif tedarikçi"],
-    "long_term": ["ERP entegrasyonu", "Departman hedef uyumu"],
-    "quick_wins": ["Şikayet kategorize", "Tedarikçi denetimi"],
-    "success_metrics": ["Şikayetlerde %20 düşüş", "Teslimat iyileşmesi"]
+    "short_term": [
+      {"action": "Acil stok sayımı", "timeline": "2 hafta", "owner": "Depo Ekibi", "priority": "high"}
+    ],
+    "mid_term": [...],
+    "long_term": [...],
+    "quick_wins": ["Stok sayımı", "5S uygulaması"],
+    "success_metrics": ["Şikayetlerde %40 azalma", "Hazırlık 1 güne düşsün"]
   },
   "risk_analysis": {
-    "overall_risk_level": "medium",
-    "top_priority_risk": "Tedarikçi direnci"
+    "overall_risk_level": "high",
+    "top_priority_risk": "Bütçe yetersizliği",
+    "risks": [
+      {"risk_name": "Personel direnci", "probability": "high", "impact": "high", "mitigation": "Değişim şampiyonları programı"}
+    ]
   },
   "business_report": {
-    "executive_summary": "Şirket müşteri şikayetleriyle karşı karşıya...",
-    "report_markdown": "# Rapor\n\n## Özet\n..."
+    "executive_summary": "Şikayetlerin ana nedeni depo ve envanter sorunları. 2 hafta içinde stok sayımı kritik.",
+    "report_markdown": "# İş Problemi Analiz Raporu\n\n## Yönetici Özeti\n..."
   }
 }
 ```
 
 </details>
 
-## Test
+## Testler
+
 ```bash
-# Unit test
+# Unit testler - data structure validation
 poetry run pytest tests/test_unit.py -v
 
-# Integration test
+# Integration testler - gerçek API çağrıları
 docker compose up -d
 poetry run pytest tests/test_integration.py -v
 ```
 
-**Sonuç:** 19 passed
+### Test Sonuçları
+
+```
+tests/test_unit.py - 19 passed
+tests/test_integration.py - 8 passed
+================================
+TOTAL: 27 passed
+```
 
 ### Test Kapsamı
 
@@ -446,19 +627,20 @@ poetry run pytest tests/test_integration.py -v
 | AgentFlowLogic | 4 |
 | SessionStateLogic | 2 |
 
-### Test Kapsamını Artırma Önerileri
+### Test Yaklaşımı
 
-Mevcut testler temel yapıları doğruluyor. Production için ek testler:
+**Unit testler** (`test_unit.py`): Fixture data ile structure validation. Field'lar var mı, değerler valid mi, agent flow mantığı doğru mu.
+
+**Integration testler** (`test_integration.py`): Gerçek API çağrıları. Health check, error handling, non-business rejection, discovery flow, business info with sources.
+
+LLM mock'u kullanmadım çünkü LLM response'ları non-deterministic. Mock'lamak yerine gerçek davranışı test etmek daha değerli.
+
+### Test Genişletme Önerileri
 
 **Edge Case Testleri:**
 - Boş input, çok uzun input (10K+ karakter)
 - Özel karakterler, SQL injection denemeleri
 - Geçersiz session_id, expire olmuş session
-
-**LLM Mock Testleri:**
-- Gerçek API çağrısı yapmadan unit test
-- Farklı LLM response senaryoları (timeout, rate limit, malformed JSON)
-- Deterministic test için fixture'lar
 
 **Load Testing:**
 - Locust ile concurrent request testi
@@ -470,42 +652,65 @@ Mevcut testler temel yapıları doğruluyor. Production için ek testler:
 - Farklı problem tipleri (Growth, Cost, Operational)
 - Session timeout ve recovery
 
-**Contract Testing:**
-- Pydantic model değişikliklerinde API uyumluluğu
-- Backward compatibility kontrolü
-
 ## Deployment
 
-### Docker
 ```bash
 docker compose up -d
 ```
 
-### CI/CD
+CI/CD için `.github/workflows/deploy.yml` var - push'ta test, main'e merge'de deploy.
 
-GitHub Actions ile:
-- Push'ta unit test
-- Main branch'e merge'de deploy
+## Teknik Kararlar
 
-## Geliştirme Notları
+### Neden MongoDB?
 
-### Web Araştırma Stratejisi
+PostgreSQL yerine MongoDB tercih ettim:
 
-Tavily API iki modda çalışabiliyor:
+- **Document model:** Conversation data'sı doğal olarak nested JSON yapısında. Her turn, her agent çıktısı iç içe document olarak saklanıyor. Relational model'de bu 5-6 tablo ve JOIN gerektirir.
+- **Esnek schema:** Agent'lar geliştikçe çıktı yapıları değişiyor. MongoDB'de migration yapmadan yeni field eklenebilir.
+- **LangGraph entegrasyonu:** `langgraph-checkpoint-mongodb` paketi hazır. PostgreSQL için manuel implementasyon gerekir.
 
-| Mod | Süre | Kaynak | Kullanım |
-|-----|------|--------|----------|
-| Research | 30-45sn | 20+ | Detaylı rapor, varsayılan |
-| Search | 1-3sn | 3-5 | Hızlı cevap, basit sorular |
+### Neden LangGraph?
 
-Sistem şu an Research modunda çalışıyor (daha kapsamlı). İleride query complexity'ye göre otomatik seçim eklenebilir.
+- State management hazır
+- Checkpoint'lar hazır (MongoDB ile entegre)
+- Yeni agent eklemek = sadece node ekle
+- Kendi workflow engine yazmaktan daha güvenilir
 
-### İyileştirme Fikirleri
+### Neden Redis?
+
+Tek Redis instance üç farklı iş görüyor:
+
+- **Session store:** Multi-turn conversation state'i (TTL: 1 saat)
+- **Celery broker:** Task queue
+- **Rate limiting:** SlowAPI backend'i
+
+Memcached alternatifti ama rate limiting için sorted set gibi veri yapıları gerekti, Redis bunu native destekliyor.
+
+### Session TTL neden 1 saat?
+
+Discovery 3-5 tur sürüyor. Kullanıcı her turda düşünebilir. 1 saat makul.
+
+### Celery timeout neden 5 dakika?
+
+Full flow (6 agent + Tavily) en kötü durumda 3-4 dakika. 5 dakika buffer'lı değer.
+
+### Discovery neden 3-5 soru?
+
+Config'den ayarlanabilir (`discovery_min_questions`, `discovery_max_questions`). 3'ten az yüzeysel kalıyor, 5'ten fazla kullanıcıyı yoruyor. Gerçek testlerde genelde 4. soruda yeterli bilgi toplandığını gördüm.
+
+## Bilinen Limitasyonlar
+
+- Türkçe prompt'lar var, uluslararası kullanım için çeviri gerekir
+- Session recovery yok - worker crash olursa conversation kaybolur
+- Rate limiting IP bazlı, ileride API key bazlı yapılabilir
+
+## Geliştirme Fikirleri
 
 **Kısa Vadeli:**
 - API key authentication
 - Request validation detaylandırma
-- Search/Research otomatik seçimi
+- Search/Research otomatik seçimi (query complexity'ye göre)
 
 **Orta Vadeli:**
 - Response caching (sık sorulan sorular)
@@ -518,30 +723,23 @@ Sistem şu an Research modunda çalışıyor (daha kapsamlı). İleride query co
 - PDF export
 
 ## Proje Yapısı
+
 ```
 business-advisor/
 ├── app/
-│   ├── agents/
-│   │   ├── peer.py
-│   │   ├── discovery.py
-│   │   ├── structuring.py
-│   │   ├── action.py
-│   │   ├── risk.py
-│   │   ├── report.py
-│   │   └── workflow.py
-│   ├── models/
-│   ├── prompts/
-│   ├── main.py
-│   ├── worker.py
-│   └── ...
+│   ├── agents/          # 6 agent + workflow
+│   ├── models/          # Pydantic modeller
+│   ├── prompts/         # YAML prompt dosyaları
+│   ├── main.py          # FastAPI app
+│   ├── worker.py        # Celery worker + MongoDB persist
+│   ├── cache.py         # Redis
+│   ├── db.py            # MongoDB
+│   └── logging.py       # JSON/Simple formatter
 ├── tests/
-├── docs/
-│   └── architecture.png
-├── Dockerfile
-├── docker-compose.yml
-└── README.md
+│   ├── conftest.py      # Fixtures
+│   ├── test_unit.py     # Structure validation (19 test)
+│   └── test_integration.py  # API testleri (8 test)
+├── scripts/             # Deploy scriptleri
+├── .github/workflows/   # CI/CD
+└── docker-compose.yml
 ```
-
-## Lisans
-
-MIT

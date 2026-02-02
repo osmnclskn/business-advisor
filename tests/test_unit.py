@@ -1,7 +1,3 @@
-# tests/test_unit.py
-
-import pytest
-
 
 class TestDiscoveryOutputStructure:
 

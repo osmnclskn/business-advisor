@@ -5,7 +5,7 @@ from celery import Celery
 from app.agents.workflow import AdvisorWorkflow, create_workflow_with_checkpointer
 from app.cache import get_redis_cache
 from app.config import get_settings
-from app.db import get_mongodb_service
+from app.db import get_mongodb_service, log_conversation_sync
 from app.logging import LogContext, get_logger
 from app.models.db import ConversationLog
 
@@ -55,8 +55,11 @@ def _persist_completed_session(session_id: str, user_input: str, state: dict):
             },
         )
 
-        asyncio.run(db.log_conversation(conversation))
-        logger.info("Session persisted to MongoDB")
+        result = log_conversation_sync(conversation)
+        if result:
+            logger.info(f"Session persisted to MongoDB: {result}")
+        else:
+            logger.warning("MongoDB persist returned no result")
 
     except Exception as persist_error:
         logger.warning(f"MongoDB persist failed: {persist_error}")
@@ -79,7 +82,6 @@ def process_agent_task(
                 logger.info(f"New task: {task[:50]}...")
                 state = workflow.run(session_id, task)
 
-            # Redis session yönetimi
             if state["awaiting_user_input"]:
                 cache.save_session(
                     session_id, dict(state), settings.session_ttl_seconds
@@ -87,7 +89,6 @@ def process_agent_task(
             elif state["is_complete"] and existing_state:
                 cache.delete_session(session_id)
 
-            # Tamamlanan session'ları MongoDB'ye kaydet
             if state["is_complete"]:
                 _persist_completed_session(session_id, task, state)
 

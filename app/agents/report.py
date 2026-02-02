@@ -1,7 +1,4 @@
-# app/agents/report.py
-
 from datetime import datetime
-
 from app.agents.base import BaseAgent
 from app.llm import get_report_llm
 from app.models.domain import (
@@ -14,13 +11,6 @@ from app.models.domain import (
 
 
 class ReportAgent(BaseAgent):
-    """
-    Tüm analiz çıktılarını profesyonel rapora dönüştürür.
-    
-    Halüsinasyon riski yok - sadece mevcut veriyi formatlar.
-    Executive summary için LLM kullanılır, geri kalan template-based.
-    """
-
     def __init__(self):
         super().__init__(llm=get_report_llm())
 
@@ -217,83 +207,3 @@ class ReportAgent(BaseAgent):
 """
         return report_template
 
-
-if __name__ == "__main__":
-    from app.models.domain import ConversationTurn, ProblemNode, ProblemType
-
-    agent = ReportAgent()
-
-    test_discovery = DiscoveryOutput(
-        customer_stated_problem="Müşteri şikayetleri çok arttı",
-        identified_business_problem="Operasyonel verimsizlik ve kalite kontrol eksikliği",
-        hidden_root_risk="Müşteri kaybı ve marka itibar hasarı",
-        chat_summary="Müşteri son 6 ayda şikayetlerin %45 arttığını belirtti.",
-        conversation_turns=[
-            ConversationTurn(question="Ne zaman başladı?", answer="6 ay önce", turn_number=1)
-        ],
-    )
-
-    test_tree = StructuredProblemTree(
-        problem_type=ProblemType.OPERATIONAL,
-        main_problem="Müşteri Şikayetlerinde Artış",
-        problem_tree=[
-            ProblemNode(
-                main_cause="Teslimat Gecikmeleri",
-                sub_causes=["Lojistik altyapı yetersiz", "Stok yönetimi zayıf"],
-            ),
-            ProblemNode(
-                main_cause="Ürün Kalite Sorunları",
-                sub_causes=["Kalite kontrol eksik", "Tedarikçi problemleri"],
-            ),
-        ],
-    )
-
-    test_plan = ActionPlan(
-        short_term=[
-            ActionItem(
-                action="Lojistik süreç analizi",
-                timeline="2 hafta",
-                owner="Operasyon",
-                priority="high",
-                expected_outcome="Darboğazları tespit et",
-            ),
-            ActionItem(
-                action="Kalite kontrol sıklığını artır",
-                timeline="1 hafta",
-                owner="Kalite Ekibi",
-                priority="high",
-                expected_outcome="Hatalı ürün oranını düşür",
-            ),
-        ],
-        mid_term=[
-            ActionItem(
-                action="Yeni lojistik partner araştır",
-                timeline="3 ay",
-                owner="Tedarik Zinciri",
-                priority="high",
-                expected_outcome="Teslimat süresini kısalt",
-            ),
-        ],
-        long_term=[
-            ActionItem(
-                action="Otomasyon yatırımı",
-                timeline="8 ay",
-                owner="IT",
-                priority="medium",
-                expected_outcome="Operasyonel verimlilik",
-            ),
-        ],
-        quick_wins=["Müşteri şikayet hattı kur", "Teslimat takip SMS'i başlat"],
-        risks=["Kaynak yetersizliği", "Tedarikçi direnci"],
-        success_metrics=["3 ayda şikayetlerde %20 azalma", "Teslimat süresinde %15 iyileşme"],
-    )
-
-    print("Rapor oluşturuluyor...\n")
-    report = agent.generate_report(test_discovery, test_tree, test_plan)
-
-    print("EXECUTIVE SUMMARY:")
-    print("-" * 40)
-    print(report.executive_summary)
-    print("\nFULL REPORT (ilk 2000 karakter):")
-    print("-" * 40)
-    print(report.report_markdown[:200000])

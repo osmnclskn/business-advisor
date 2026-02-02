@@ -1,4 +1,3 @@
-# tests/test_integration.py
 
 import time
 
@@ -7,7 +6,7 @@ import requests
 
 BASE_URL = "http://localhost:8000"
 TIMEOUT_SHORT = 30
-TIMEOUT_LONG = 180  # Full flow için artırıldı
+TIMEOUT_LONG = 180 
 
 
 def submit_task(task: str, session_id: str | None = None) -> str:
