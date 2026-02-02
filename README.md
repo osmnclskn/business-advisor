@@ -600,6 +600,35 @@ Tek Redis instance üç farklı iş görüyor:
 
 Memcached alternatifti ama rate limiting için sorted set gibi veri yapıları gerekti, Redis bunu native destekliyor.
 
+### In-Memory Cache (@lru_cache)
+
+Singleton servisler için `@lru_cache` kullanıyorum:
+
+```python
+@lru_cache(maxsize=1)
+def get_mongodb_service() -> MongoDBService:
+    ...
+
+@lru_cache(maxsize=1)
+def get_redis_cache() -> RedisCache:
+    ...
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    ...
+```
+
+**Neden?**
+- Her request'te yeni connection açmak yerine tek instance kullan
+- Thread-safe (Python GIL sayesinde)
+- Race condition yok - ilk çağrıda oluşur, sonrakiler cache'ten döner
+- Memory overhead minimal (maxsize=1)
+
+**Alternatifler:**
+- Global değişken: Import sırasında initialize olur, test zorlaşır
+- Dependency injection: FastAPI'de `Depends()` ile yapılabilirdi ama Celery worker'da kullanılamaz
+- Redis'te cache: Network overhead, bu kadar basit iş için overkill
+
 ### Session TTL neden 1 saat?
 
 Discovery 3-5 tur sürüyor. Kullanıcı her turda düşünebilir. 1 saat makul.
