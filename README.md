@@ -339,93 +339,6 @@ system: |
 - **Kolay test:** Farklı prompt versiyonları A/B test edilebilir
 - **Non-technical edit:** Prompt'ları düzenlemek için Python bilmek gerekmiyor
 
-## Prompt Mühendisliği
-
-Promptlar `app/prompts/` altında YAML formatında tutuluyor. Kod değişikliği yapmadan prompt güncellenebilir.
-
-### Prompt Dosya Yapısı
-
-```yaml
-system: |
-  [Rol tanımı]
-  [Görev açıklaması]
-  [Kısıtlamalar]
-  [Few-shot örnekler]
-
-user: |
-  [Input template - {variable} formatında]
-  [Output format talimatı]
-
-temperature: 0.5
-max_tokens: 1000
-```
-
-### Kullanılan Teknikler
-
-**Few-shot Learning:** Her prompt'ta 2-3 örnek var. Model ne yapacağını açıklamadan değil, örnekten öğreniyor.
-
-```yaml
-# Örnek: peer_classify.yaml
-system: |
-  Kullanıcı mesajlarını kategorize et.
-  
-  ÖRNEKLER:
-  
-  Kullanıcı: "Rakiplerimiz kimler?"
-  Kategori: business_info
-  
-  Kullanıcı: "Satışlar düşüyor"
-  Kategori: business_problem
-  
-  Kullanıcı: "Hava nasıl?"
-  Kategori: non_business
-```
-
-**Chain-of-thought:** Karmaşık görevlerde adım adım düşünme.
-
-```yaml
-# Discovery agent'ta reasoning
-system: |
-  Önce düşün:
-  1. Müşteri ne söyledi?
-  2. Hangi bilgi eksik?
-  3. Bu bilgiyi almak için en iyi soru ne?
-  
-  Sonra soruyu yaz.
-```
-
-**Structured Output:** JSON schema ile çıktı formatı zorlama.
-
-```yaml
-# Structuring agent JSON output
-system: |
-  ÇIKTI FORMATI (sadece JSON):
-  {
-    "problem_type": "Growth|Cost|Operational|...",
-    "main_problem": "string",
-    "problem_tree": [
-      {"main_cause": "string", "sub_causes": ["string"]}
-    ]
-  }
-```
-
-**Negative Examples:** Yapılmaması gerekenleri gösterme.
-
-```yaml
-system: |
-  YAPMA:
-  - Çözüm önerme (sadece soru sor)
-  - Birden fazla soru sorma
-  - Kullanıcıyı yönlendirme
-```
-
-### Neden YAML?
-
-- **Versiyon kontrolü:** Prompt değişiklikleri git history'de görünür
-- **Kod ayrımı:** Prompt mantığı Python'dan bağımsız
-- **Kolay test:** Farklı prompt versiyonları A/B test edilebilir
-- **Non-technical edit:** Prompt'ları düzenlemek için Python bilmek gerekmiyor
-
 ## Rate Limiting
 
 SlowAPI kullanıyorum, Redis backend'li:
@@ -459,7 +372,7 @@ Tamamlanan conversation'lar `conversations` collection'ına yazılıyor. Worker'
 ## Kurulum
 
 ```bash
-git clone https://github.com/osmnclskn/business-advisor.git
+git clone https://github.com/username/business-advisor.git
 cd business-advisor
 cp .env.example .env
 # API key'leri .env'e ekle
@@ -704,6 +617,31 @@ Config'den ayarlanabilir (`discovery_min_questions`, `discovery_max_questions`).
 - Türkçe prompt'lar var, uluslararası kullanım için çeviri gerekir
 - Session recovery yok - worker crash olursa conversation kaybolur
 - Rate limiting IP bazlı, ileride API key bazlı yapılabilir
+
+## Mevcut Durum ve Production Uygunluğu
+
+### Şu An Hazır Olanlar
+
+- ✅ Temel işlevsellik çalışıyor (3 flow: non_business, business_info, business_problem)
+- ✅ Asenkron task processing (Celery)
+- ✅ Session yönetimi (Redis, 1 saat TTL)
+- ✅ Rate limiting (SlowAPI)
+- ✅ Structured logging (JSON format)
+- ✅ Health check endpoint
+- ✅ Docker containerization
+- ✅ CI/CD pipeline
+
+### Production İçin Gerekli İyileştirmeler
+
+| Alan | Mevcut | Production İçin |
+|------|--------|-----------------|
+| **Authentication** | Yok | API key veya JWT |
+| **Rate Limiting** | IP bazlı | API key bazlı, tier sistemi |
+| **Monitoring** | stdout log | Prometheus + Grafana |
+| **Error Tracking** | Log warning | Sentry entegrasyonu |
+| **Scaling** | Tek worker | Kubernetes, auto-scaling |
+| **Caching** | Yok | Response cache (sık sorular) |
+| **Backup** | Yok | MongoDB replica set |
 
 ## Geliştirme Fikirleri
 
