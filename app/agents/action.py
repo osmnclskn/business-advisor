@@ -1,4 +1,3 @@
-
 import json
 
 from app.agents.base import BaseAgent
@@ -12,7 +11,7 @@ class ActionPlanAgent(BaseAgent):
         super().__init__(llm=get_action_llm())
 
     def create_plan(
-        self, problem_tree: StructuredProblemTree, chat_summary: str
+        self, problem_tree: StructuredProblemTree, chat_summary: str, response_language: str = "Turkish"
     ) -> ActionPlan:
         planning_response = self.invoke_llm(
             prompt_name="action_plan",
@@ -21,12 +20,13 @@ class ActionPlanAgent(BaseAgent):
                 "main_problem": problem_tree.main_problem,
                 "problem_tree_formatted": self._format_tree(problem_tree),
                 "chat_summary": chat_summary,
+                "response_language": response_language,
             },
         )
         return self._parse_plan(planning_response)
 
     async def create_plan_async(
-        self, problem_tree: StructuredProblemTree, chat_summary: str
+        self, problem_tree: StructuredProblemTree, chat_summary: str, response_language: str = "Turkish"
     ) -> ActionPlan:
         planning_response = await self.invoke_llm_async(
             prompt_name="action_plan",
@@ -35,6 +35,7 @@ class ActionPlanAgent(BaseAgent):
                 "main_problem": problem_tree.main_problem,
                 "problem_tree_formatted": self._format_tree(problem_tree),
                 "chat_summary": chat_summary,
+                "response_language": response_language,
             },
         )
         return self._parse_plan(planning_response)
@@ -83,16 +84,16 @@ class ActionPlanAgent(BaseAgent):
         return ActionPlan(
             short_term=[
                 ActionItem(
-                    action="Manuel aksiyon planı oluştur",
+                    action="Manuel aksiyon planÄ± oluÅŸtur",
                     timeline="1 hafta",
-                    owner="Proje yöneticisi",
+                    owner="Proje yÃ¶neticisi",
                     priority="high",
-                    expected_outcome="Detaylı plan hazırla",
+                    expected_outcome="DetaylÄ± plan hazÄ±rla",
                 )
             ],
             mid_term=[],
             long_term=[],
-            quick_wins=["Otomatik analiz başarısız - manuel değerlendirme önerilir"],
-            risks=["Veri yetersizliği"],
-            success_metrics=["Plan tamamlanması"],
+            quick_wins=["Otomatik analiz baÅŸarÄ±sÄ±z - manuel deÄŸerlendirme Ã¶nerilir"],
+            risks=["Veri yetersizliÄŸi"],
+            success_metrics=["Plan tamamlanmasÄ±"],
         )

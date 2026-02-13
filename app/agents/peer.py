@@ -2,6 +2,7 @@ from app.agents.base import BaseAgent
 from app.llm import get_peer_llm
 from app.models.domain import IntentType
 from app.search import get_research_service
+from app.utils import detect_language
 
 
 class PeerAgent(BaseAgent):
@@ -32,6 +33,7 @@ class PeerAgent(BaseAgent):
         return IntentType.NON_BUSINESS
 
     def handle_business_info(self, user_message: str) -> dict:
+        detected_lang = detect_language(user_message)
         research_output = self.research_service.research(user_message)
 
         if not research_output.is_successful:
@@ -43,7 +45,10 @@ class PeerAgent(BaseAgent):
             }
         summarized = self.invoke_llm(
             prompt_name="peer_summarize",
-            prompt_variables={"research_content": research_output.content},
+            prompt_variables={
+                "research_content": research_output.content,
+                "response_language": detected_lang,
+            },
         )
 
         return {
@@ -54,6 +59,7 @@ class PeerAgent(BaseAgent):
         }
 
     async def handle_business_info_async(self, user_message: str) -> dict:
+        detected_lang = detect_language(user_message)
         research_output = await self.research_service.research_async(user_message)
 
         if not research_output.is_successful:
@@ -66,7 +72,10 @@ class PeerAgent(BaseAgent):
 
         summarized = await self.invoke_llm_async(
             prompt_name="peer_summarize",
-            prompt_variables={"research_content": research_output.content},
+            prompt_variables={
+                "research_content": research_output.content,
+                "response_language": detected_lang,
+            },
         )
 
         return {
@@ -77,34 +86,48 @@ class PeerAgent(BaseAgent):
         }
 
     def handle_business_problem(self, user_message: str) -> dict:
-        return {
-            "message": (
+        detected_lang = detect_language(user_message)
+
+        routing_messages = {
+            "Turkish": (
                 "Anlattığınız durumun detaylı bir problem analizi gerektirdiğini görüyorum. "
                 "Sizi problem keşfi sürecine yönlendiriyorum."
             ),
+            "English": (
+                "I can see that your situation requires a detailed problem analysis. "
+                "I'm routing you to the problem discovery process."
+            ),
+        }
+
+        return {
+            "message": routing_messages.get(detected_lang, routing_messages["English"]),
             "route_to": "discovery",
             "original_input": user_message,
         }
 
     def handle_non_business(self, user_message: str) -> dict:
+        detected_lang = detect_language(user_message)
         rejection = self.invoke_llm(
             prompt_name="peer_respond",
             prompt_variables={
                 "response_type": "non_business",
                 "user_input": user_message,
                 "search_results": "",
+                "response_language": detected_lang,
             },
         )
 
         return {"message": rejection, "route_to": None}
 
     async def handle_non_business_async(self, user_message: str) -> dict:
+        detected_lang = detect_language(user_message)
         rejection = await self.invoke_llm_async(
             prompt_name="peer_respond",
             prompt_variables={
                 "response_type": "non_business",
                 "user_input": user_message,
                 "search_results": "",
+                "response_language": detected_lang,
             },
         )
 
@@ -112,6 +135,7 @@ class PeerAgent(BaseAgent):
 
     def process(self, user_message: str) -> dict:
         detected_intent = self.classify_intent(user_message)
+        detected_lang = detect_language(user_message)
 
         if detected_intent == IntentType.BUSINESS_INFO:
             result = self.handle_business_info(user_message)
@@ -120,10 +144,11 @@ class PeerAgent(BaseAgent):
         else:
             result = self.handle_non_business(user_message)
 
-        return {"intent": detected_intent.value, **result}
+        return {"intent": detected_intent.value, "language": detected_lang, **result}
 
     async def process_async(self, user_message: str) -> dict:
         detected_intent = await self.classify_intent_async(user_message)
+        detected_lang = detect_language(user_message)
 
         if detected_intent == IntentType.BUSINESS_INFO:
             result = await self.handle_business_info_async(user_message)
@@ -132,4 +157,4 @@ class PeerAgent(BaseAgent):
         else:
             result = await self.handle_non_business_async(user_message)
 
-        return {"intent": detected_intent.value, **result}
+        return {"intent": detected_intent.value, "language": detected_lang, **result}

@@ -10,6 +10,62 @@ from app.models.domain import (
 )
 
 
+REPORT_LABELS = {
+    "Turkish": {
+        "title": "İş Problemi Analiz Raporu",
+        "generated": "Oluşturulma",
+        "exec_summary": "Yönetici Özeti",
+        "problem_def": "Problem Tanımı",
+        "customer_statement": "Müşteri İfadesi",
+        "identified_problem": "Tespit Edilen Problem",
+        "hidden_risk": "Gizli Risk",
+        "problem_analysis": "Problem Analizi",
+        "problem_type": "Problem Tipi",
+        "main_problem": "Ana Problem",
+        "root_causes": "Kök Nedenler",
+        "action_plan": "Aksiyon Planı",
+        "short_term": "Kısa Vade (0-3 Ay)",
+        "mid_term": "Orta Vade (3-6 Ay)",
+        "long_term": "Uzun Vade (6-12 Ay)",
+        "quick_wins": "Hızlı Kazanımlar",
+        "risks": "Riskler",
+        "success_metrics": "Başarı Metrikleri",
+        "appendix": "Ek: Keşif Görüşmesi Özeti",
+        "action_col": "Aksiyon",
+        "timeline_col": "Süre",
+        "owner_col": "Sorumlu",
+        "priority_col": "Öncelik",
+        "no_actions": "Bu dönem için aksiyon tanımlanmamış.",
+    },
+    "English": {
+        "title": "Business Problem Analysis Report",
+        "generated": "Generated",
+        "exec_summary": "Executive Summary",
+        "problem_def": "Problem Definition",
+        "customer_statement": "Customer Statement",
+        "identified_problem": "Identified Problem",
+        "hidden_risk": "Hidden Risk",
+        "problem_analysis": "Problem Analysis",
+        "problem_type": "Problem Type",
+        "main_problem": "Main Problem",
+        "root_causes": "Root Causes",
+        "action_plan": "Action Plan",
+        "short_term": "Short Term (0-3 Months)",
+        "mid_term": "Mid Term (3-6 Months)",
+        "long_term": "Long Term (6-12 Months)",
+        "quick_wins": "Quick Wins",
+        "risks": "Risks",
+        "success_metrics": "Success Metrics",
+        "appendix": "Appendix: Discovery Session Summary",
+        "action_col": "Action",
+        "timeline_col": "Timeline",
+        "owner_col": "Owner",
+        "priority_col": "Priority",
+        "no_actions": "No actions defined for this period.",
+    },
+}
+
+
 class ReportAgent(BaseAgent):
     def __init__(self):
         super().__init__(llm=get_report_llm())
@@ -19,16 +75,17 @@ class ReportAgent(BaseAgent):
         discovery_output: DiscoveryOutput,
         problem_tree: StructuredProblemTree,
         action_plan: ActionPlan,
+        response_language: str = "Turkish",
     ) -> BusinessReport:
-        """Tam rapor oluştur."""
+        """Generate the full business report."""
         executive_summary = self._generate_summary(
-            discovery_output, problem_tree, action_plan
+            discovery_output, problem_tree, action_plan, response_language
         )
-        
+
         report_markdown = self._build_markdown(
-            discovery_output, problem_tree, action_plan, executive_summary
+            discovery_output, problem_tree, action_plan, executive_summary, response_language
         )
-        
+
         return BusinessReport(
             executive_summary=executive_summary,
             report_markdown=report_markdown,
@@ -40,16 +97,16 @@ class ReportAgent(BaseAgent):
         discovery_output: DiscoveryOutput,
         problem_tree: StructuredProblemTree,
         action_plan: ActionPlan,
+        response_language: str = "Turkish",
     ) -> BusinessReport:
-        """FastAPI endpoint'lerinde kullanılacak."""
         executive_summary = await self._generate_summary_async(
-            discovery_output, problem_tree, action_plan
+            discovery_output, problem_tree, action_plan, response_language
         )
-        
+
         report_markdown = self._build_markdown(
-            discovery_output, problem_tree, action_plan, executive_summary
+            discovery_output, problem_tree, action_plan, executive_summary, response_language
         )
-        
+
         return BusinessReport(
             executive_summary=executive_summary,
             report_markdown=report_markdown,
@@ -61,8 +118,8 @@ class ReportAgent(BaseAgent):
         discovery: DiscoveryOutput,
         tree: StructuredProblemTree,
         plan: ActionPlan,
+        response_language: str = "Turkish",
     ) -> str:
-        """LLM ile executive summary oluştur."""
         short_term_actions = "\n".join(
             f"- {a.action} ({a.timeline})" for a in plan.short_term[:3]
         )
@@ -77,6 +134,7 @@ class ReportAgent(BaseAgent):
                 "main_problem": tree.main_problem,
                 "short_term_actions": short_term_actions,
                 "success_metrics": success_metrics,
+                "response_language": response_language,
             },
         )
         return summary_response.strip()
@@ -86,8 +144,8 @@ class ReportAgent(BaseAgent):
         discovery: DiscoveryOutput,
         tree: StructuredProblemTree,
         plan: ActionPlan,
+        response_language: str = "Turkish",
     ) -> str:
-        """Async executive summary."""
         short_term_actions = "\n".join(
             f"- {a.action} ({a.timeline})" for a in plan.short_term[:3]
         )
@@ -102,17 +160,18 @@ class ReportAgent(BaseAgent):
                 "main_problem": tree.main_problem,
                 "short_term_actions": short_term_actions,
                 "success_metrics": success_metrics,
+                "response_language": response_language,
             },
         )
         return summary_response.strip()
 
-    def _build_action_table(self, actions: list[ActionItem]) -> str:
-        """Aksiyon listesini Markdown tablosuna çevir."""
+    def _build_action_table(self, actions: list[ActionItem], labels: dict) -> str:
+        """Convert action list to Markdown table with language-adaptive headers."""
         if not actions:
-            return "*Bu dönem için aksiyon tanımlanmamış.*\n"
-        
+            return f"*{labels['no_actions']}*\n"
+
         table_lines = [
-            "| Aksiyon | Süre | Sorumlu | Öncelik |",
+            f"| {labels['action_col']} | {labels['timeline_col']} | {labels['owner_col']} | {labels['priority_col']} |",
             "|---------|------|---------|---------|",
         ]
         for action in actions:
@@ -127,83 +186,79 @@ class ReportAgent(BaseAgent):
         tree: StructuredProblemTree,
         plan: ActionPlan,
         executive_summary: str,
+        response_language: str = "Turkish",
     ) -> str:
-        """Template-based Markdown rapor oluştur."""
-        
+        """Template-based Markdown report — headers adapt to detected language."""
+
         report_date = datetime.now().strftime("%d %B %Y")
-        
-        # Problem ağacı formatla
+        labels = REPORT_LABELS.get(response_language, REPORT_LABELS["English"])
+
+        # Format problem tree
         problem_tree_text = ""
         for node in tree.problem_tree:
             problem_tree_text += f"**{node.main_cause}**\n"
             for sub in node.sub_causes:
                 problem_tree_text += f"  - {sub}\n"
             problem_tree_text += "\n"
-        
-        # Quick wins formatla
+
         quick_wins_text = "\n".join(f"- ⚡ {win}" for win in plan.quick_wins)
-        
-        # Riskler formatla
         risks_text = "\n".join(f"- ⚠️ {risk}" for risk in plan.risks)
-        
-        # Metrikler formatla
         metrics_text = "\n".join(f"- 📊 {metric}" for metric in plan.success_metrics)
-        
-        report_template = f"""# İş Problemi Analiz Raporu
 
-*Oluşturulma: {report_date}*
+        report_template = f"""# {labels["title"]}
 
-## Yönetici Özeti
+*{labels["generated"]}: {report_date}*
+
+## {labels["exec_summary"]}
 
 {executive_summary}
 
-## Problem Tanımı
+## {labels["problem_def"]}
 
-**Müşteri İfadesi:** {discovery.customer_stated_problem}
+**{labels["customer_statement"]}:** {discovery.customer_stated_problem}
 
-**Tespit Edilen Problem:** {discovery.identified_business_problem}
+**{labels["identified_problem"]}:** {discovery.identified_business_problem}
 
-**Gizli Risk:** {discovery.hidden_root_risk}
+**{labels["hidden_risk"]}:** {discovery.hidden_root_risk}
 
-## Problem Analizi
+## {labels["problem_analysis"]}
 
-**Problem Tipi:** {tree.problem_type.value.upper()}
+**{labels["problem_type"]}:** {tree.problem_type.value.upper()}
 
-**Ana Problem:** {tree.main_problem}
+**{labels["main_problem"]}:** {tree.main_problem}
 
-### Kök Nedenler
+### {labels["root_causes"]}
 
 {problem_tree_text}
 
-## Aksiyon Planı
+## {labels["action_plan"]}
 
-### Kısa Vade (0-3 Ay)
+### {labels["short_term"]}
 
-{self._build_action_table(plan.short_term)}
+{self._build_action_table(plan.short_term, labels)}
 
-### Orta Vade (3-6 Ay)
+### {labels["mid_term"]}
 
-{self._build_action_table(plan.mid_term)}
+{self._build_action_table(plan.mid_term, labels)}
 
-### Uzun Vade (6-12 Ay)
+### {labels["long_term"]}
 
-{self._build_action_table(plan.long_term)}
+{self._build_action_table(plan.long_term, labels)}
 
-## Hızlı Kazanımlar
+## {labels["quick_wins"]}
 
 {quick_wins_text}
 
-## Riskler
+## {labels["risks"]}
 
 {risks_text}
 
-## Başarı Metrikleri
+## {labels["success_metrics"]}
 
 {metrics_text}
 
-## Ek: Keşif Görüşmesi Özeti
+## {labels["appendix"]}
 
 {discovery.chat_summary}
 """
         return report_template
-

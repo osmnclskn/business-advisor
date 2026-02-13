@@ -1,10 +1,9 @@
-
 import json
 from app.agents.base import BaseAgent
 from app.config import get_settings
 from app.llm import get_discovery_llm
 from app.models.domain import ConversationTurn, DiscoveryOutput
-from app.utils import clean_llm_json_response
+from app.utils import clean_llm_json_response, detect_language
 
 
 class DiscoveryAgent(BaseAgent):
@@ -16,21 +15,24 @@ class DiscoveryAgent(BaseAgent):
         self._reset_state()
 
     def _reset_state(self):
-        """Agent state'ini sıfırlar. Yeni discovery başlatırken çağrılır."""
+        """Reset agent state. Called when starting a new discovery session."""
         self.initial_problem: str = ""
         self.conversation_turns: list[ConversationTurn] = []
         self.current_question: str = ""
+        self.response_language: str = "Turkish"
 
-    def start_discovery(self, user_problem: str) -> str:
+    def start_discovery(self, user_problem: str, language: str | None = None) -> str:
         self._reset_state()
         self.initial_problem = user_problem
+        # Language detected from initial problem if not provided by workflow
+        self.response_language = language or detect_language(user_problem)
         self.current_question = self._generate_question()
         return self.current_question
 
-    async def start_discovery_async(self, user_problem: str) -> str:
-        """FastAPI endpoint'lerinde kullanılacak."""
+    async def start_discovery_async(self, user_problem: str, language: str | None = None) -> str:
         self._reset_state()
         self.initial_problem = user_problem
+        self.response_language = language or detect_language(user_problem)
         self.current_question = await self._generate_question_async()
         return self.current_question
 
@@ -61,25 +63,35 @@ class DiscoveryAgent(BaseAgent):
         self.conversation_turns.append(turn)
 
     def _generate_question(self) -> str:
+        no_conversation_msg = (
+            "Henüz konuşma yok." if self.response_language == "Turkish"
+            else "No conversation yet."
+        )
         question = self.invoke_llm(
             prompt_name="discovery_question",
             prompt_variables={
                 "initial_problem": self.initial_problem,
                 "conversation_history": self._format_conversation_history()
-                or "Henüz konuşma yok.",
+                or no_conversation_msg,
                 "question_number": len(self.conversation_turns) + 1,
+                "response_language": self.response_language,
             },
         )
         return question.strip()
 
     async def _generate_question_async(self) -> str:
+        no_conversation_msg = (
+            "Henüz konuşma yok." if self.response_language == "Turkish"
+            else "No conversation yet."
+        )
         question = await self.invoke_llm_async(
             prompt_name="discovery_question",
             prompt_variables={
                 "initial_problem": self.initial_problem,
                 "conversation_history": self._format_conversation_history()
-                or "Henüz konuşma yok.",
+                or no_conversation_msg,
                 "question_number": len(self.conversation_turns) + 1,
+                "response_language": self.response_language,
             },
         )
         return question.strip()
@@ -90,6 +102,8 @@ class DiscoveryAgent(BaseAgent):
             return False
         if turn_count >= self.max_questions:
             return True
+        # Stop early if last 2 answers are detailed (>100 chars each)
+        # Prevents over-questioning when user is being thorough
         recent_answers = [t.answer for t in self.conversation_turns[-2:]]
         if len(recent_answers) >= 2 and all(len(ans) > 100 for ans in recent_answers):
             return True
@@ -102,6 +116,7 @@ class DiscoveryAgent(BaseAgent):
             prompt_variables={
                 "initial_problem": self.initial_problem,
                 "conversation_history": self._format_conversation_history(),
+                "response_language": self.response_language,
             },
         )
         return self._parse_extraction(extraction_response)
@@ -112,6 +127,7 @@ class DiscoveryAgent(BaseAgent):
             prompt_variables={
                 "initial_problem": self.initial_problem,
                 "conversation_history": self._format_conversation_history(),
+                "response_language": self.response_language,
             },
         )
         return self._parse_extraction(extraction_response)
@@ -133,10 +149,15 @@ class DiscoveryAgent(BaseAgent):
                 conversation_turns=self.conversation_turns,
             )
         except json.JSONDecodeError:
+            fallback_msg = (
+                "Extraction başarısız - manuel analiz gerekli"
+                if self.response_language == "Turkish"
+                else "Extraction failed - manual analysis required"
+            )
             return DiscoveryOutput(
                 customer_stated_problem=self.initial_problem,
-                identified_business_problem="Extraction başarısız - manuel analiz gerekli",
-                hidden_root_risk="Belirlenemedi",
+                identified_business_problem=fallback_msg,
+                hidden_root_risk="Belirlenemedi" if self.response_language == "Turkish" else "Could not be determined",
                 chat_summary=self._format_conversation_history(),
                 conversation_turns=self.conversation_turns,
             )
@@ -147,7 +168,7 @@ class DiscoveryAgent(BaseAgent):
 
         lines = []
         for turn in self.conversation_turns:
-            lines.append(f"S{turn.turn_number}: {turn.question}")
-            lines.append(f"C{turn.turn_number}: {turn.answer}")
+            lines.append(f"Q{turn.turn_number}: {turn.question}")
+            lines.append(f"A{turn.turn_number}: {turn.answer}")
 
         return "\n".join(lines)

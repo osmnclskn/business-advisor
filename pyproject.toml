@@ -26,6 +26,7 @@ black = "^26.1.0"
 isort = "^7.0.0"
 celery = "^5.6.2"
 slowapi = "^0.1.9"
+lingua-language-detector = "^2.1.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"

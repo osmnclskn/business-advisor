@@ -16,7 +16,7 @@ class StructuringAgent(BaseAgent):
         super().__init__(llm=get_structuring_llm())
 
     def structure_problem(
-        self, discovery_output: DiscoveryOutput
+        self, discovery_output: DiscoveryOutput, response_language: str = "Turkish"
     ) -> StructuredProblemTree:
         structuring_response = self.invoke_llm(
             prompt_name="structure_tree",
@@ -25,14 +25,14 @@ class StructuringAgent(BaseAgent):
                 "identified_business_problem": discovery_output.identified_business_problem,
                 "hidden_root_risk": discovery_output.hidden_root_risk,
                 "chat_summary": discovery_output.chat_summary,
+                "response_language": response_language,
             },
         )
         return self._parse_response(structuring_response)
 
     async def structure_problem_async(
-        self, discovery_output: DiscoveryOutput
+        self, discovery_output: DiscoveryOutput, response_language: str = "Turkish"
     ) -> StructuredProblemTree:
-        """FastAPI endpoint'lerinde kullanılacak."""
         structuring_response = await self.invoke_llm_async(
             prompt_name="structure_tree",
             prompt_variables={
@@ -40,6 +40,7 @@ class StructuringAgent(BaseAgent):
                 "identified_business_problem": discovery_output.identified_business_problem,
                 "hidden_root_risk": discovery_output.hidden_root_risk,
                 "chat_summary": discovery_output.chat_summary,
+                "response_language": response_language,
             },
         )
         return self._parse_response(structuring_response)
@@ -82,13 +83,13 @@ class StructuringAgent(BaseAgent):
     def _fallback_response(self) -> StructuredProblemTree:
         return StructuredProblemTree(
             problem_type=ProblemType.HYBRID,
-            main_problem="Analiz tamamlanamadı - manuel değerlendirme gerekli",
+            main_problem="Analiz tamamlanamadÄ± - manuel deÄŸerlendirme gerekli",
             problem_tree=[
                 ProblemNode(
-                    main_cause="Veri Yetersizliği",
+                    main_cause="Veri YetersizliÄŸi",
                     sub_causes=[
-                        "Otomatik analiz başarısız",
-                        "Manuel inceleme önerilir",
+                        "Otomatik analiz baÅŸarÄ±sÄ±z",
+                        "Manuel inceleme Ã¶nerilir",
                     ],
                 )
             ],

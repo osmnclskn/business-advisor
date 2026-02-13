@@ -20,6 +20,7 @@ class RiskAgent(BaseAgent):
         self,
         action_plan: ActionPlan,
         problem_tree: StructuredProblemTree,
+        response_language: str = "Turkish",
     ) -> RiskAnalysis:
         risks_formatted = "\n".join(f"- {risk}" for risk in action_plan.risks)
 
@@ -32,6 +33,7 @@ class RiskAgent(BaseAgent):
                 "short_term_count": len(action_plan.short_term),
                 "mid_term_count": len(action_plan.mid_term),
                 "long_term_count": len(action_plan.long_term),
+                "response_language": response_language,
             },
         )
         return self._parse_analysis(analysis_response, action_plan.risks)
@@ -40,6 +42,7 @@ class RiskAgent(BaseAgent):
         self,
         action_plan: ActionPlan,
         problem_tree: StructuredProblemTree,
+        response_language: str = "Turkish",
     ) -> RiskAnalysis:
         risks_formatted = "\n".join(f"- {risk}" for risk in action_plan.risks)
 
@@ -52,6 +55,7 @@ class RiskAgent(BaseAgent):
                 "short_term_count": len(action_plan.short_term),
                 "mid_term_count": len(action_plan.mid_term),
                 "long_term_count": len(action_plan.long_term),
+                "response_language": response_language,
             },
         )
         return self._parse_analysis(analysis_response, action_plan.risks)
@@ -95,9 +99,9 @@ class RiskAgent(BaseAgent):
                 risk_name=risk,
                 probability=RiskLevel.MEDIUM,
                 impact=RiskLevel.MEDIUM,
-                early_warning_signs=["Manuel değerlendirme gerekli"],
-                mitigation_strategy="Detaylı analiz yapılmalı",
-                contingency_plan="Alternatif plan oluşturulmalı",
+                early_warning_signs=["Manuel deÄŸerlendirme gerekli"],
+                mitigation_strategy="DetaylÄ± analiz yapÄ±lmalÄ±",
+                contingency_plan="Alternatif plan oluÅŸturulmalÄ±",
             )
             for risk in original_risks
         ]

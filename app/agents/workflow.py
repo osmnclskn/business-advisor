@@ -27,6 +27,7 @@ from app.models.domain import (
 class WorkflowState(TypedDict):
     session_id: str
     user_input: str
+    language: str  # "Turkish" or "English" — detected by PeerAgent, propagated to all agents
     intent: str | None
     peer_response: dict | None
     discovery_question: str | None
@@ -46,6 +47,7 @@ def create_initial_state(session_id: str, user_input: str) -> WorkflowState:
     return WorkflowState(
         session_id=session_id,
         user_input=user_input,
+        language="Turkish",  # default, overridden by PeerAgent detection
         intent=None,
         peer_response=None,
         discovery_question=None,
@@ -158,6 +160,7 @@ class AdvisorWorkflow:
         try:
             peer_result = self._peer_agent.process(state["user_input"])
             state["intent"] = peer_result["intent"]
+            state["language"] = peer_result.get("language", "Turkish")
             state["peer_response"] = peer_result
 
             if peer_result["intent"] != IntentType.BUSINESS_PROBLEM.value:
@@ -175,7 +178,9 @@ class AdvisorWorkflow:
             discovery_agent = self._get_discovery_agent(state["session_id"])
 
             if state["discovery_question"] is None:
-                first_question = discovery_agent.start_discovery(state["user_input"])
+                first_question = discovery_agent.start_discovery(
+                    state["user_input"], language=state.get("language", "Turkish")
+                )
                 state["discovery_question"] = first_question
                 state["awaiting_user_input"] = True
             else:
@@ -202,7 +207,9 @@ class AdvisorWorkflow:
                 return state
 
             discovery_output = self._to_discovery_output(state["discovery_output"])
-            structured_tree = self._structuring_agent.structure_problem(discovery_output)
+            structured_tree = self._structuring_agent.structure_problem(
+                discovery_output, response_language=state.get("language", "Turkish")
+            )
             state["problem_tree"] = structured_tree.model_dump()
 
         except Exception as e:
@@ -221,7 +228,9 @@ class AdvisorWorkflow:
             problem_tree = self._to_problem_tree(state["problem_tree"])
             chat_summary = state["discovery_output"]["chat_summary"]
 
-            generated_plan = self._action_plan_agent.create_plan(problem_tree, chat_summary)
+            generated_plan = self._action_plan_agent.create_plan(
+                problem_tree, chat_summary, response_language=state.get("language", "Turkish")
+            )
             state["action_plan"] = generated_plan.model_dump()
 
         except Exception as e:
@@ -240,7 +249,9 @@ class AdvisorWorkflow:
             action_plan = self._to_action_plan(state["action_plan"])
             problem_tree = self._to_problem_tree(state["problem_tree"])
 
-            analyzed_risks = self._risk_agent.analyze_risks(action_plan, problem_tree)
+            analyzed_risks = self._risk_agent.analyze_risks(
+                action_plan, problem_tree, response_language=state.get("language", "Turkish")
+            )
             state["risk_analysis"] = analyzed_risks.model_dump()
 
         except Exception as e:
@@ -257,7 +268,8 @@ class AdvisorWorkflow:
             action_plan = self._to_action_plan(state["action_plan"])
 
             final_report = self._report_agent.generate_report(
-                discovery_output, problem_tree, action_plan
+                discovery_output, problem_tree, action_plan,
+                response_language=state.get("language", "Turkish")
             )
             state["business_report"] = final_report.model_dump()
             state["is_complete"] = True
@@ -296,6 +308,7 @@ class AdvisorWorkflow:
 
     def continue_session(self, state: WorkflowState, user_answer: str) -> WorkflowState:
         state["user_input"] = user_answer
+        response_lang = state.get("language", "Turkish")
 
         discovery_agent = self._get_discovery_agent(state["session_id"])
 
@@ -305,19 +318,21 @@ class AdvisorWorkflow:
             self._set_error(state, "DiscoveryAgent", e)
             return state
 
-        # Discovery devam ediyor
+        # Discovery still in progress
         if not isinstance(discovery_result, DiscoveryOutput):
             state["discovery_question"] = discovery_result
             state["awaiting_user_input"] = True
             return state
 
-        # Discovery tamamlandı - zincirleme agent çağrıları
+        # Discovery complete — chain remaining agents with detected language
         state["discovery_output"] = discovery_result.model_dump()
         state["awaiting_user_input"] = False
 
         # Structuring
         try:
-            structured_tree = self._structuring_agent.structure_problem(discovery_result)
+            structured_tree = self._structuring_agent.structure_problem(
+                discovery_result, response_language=response_lang
+            )
             state["problem_tree"] = structured_tree.model_dump()
             state["agent_flow"].append("structuring")
         except Exception as e:
@@ -327,7 +342,8 @@ class AdvisorWorkflow:
         # ActionPlan
         try:
             generated_plan = self._action_plan_agent.create_plan(
-                structured_tree, discovery_result.chat_summary
+                structured_tree, discovery_result.chat_summary,
+                response_language=response_lang
             )
             state["action_plan"] = generated_plan.model_dump()
             state["agent_flow"].append("action_plan")
@@ -337,7 +353,9 @@ class AdvisorWorkflow:
 
         # Risk
         try:
-            analyzed_risks = self._risk_agent.analyze_risks(generated_plan, structured_tree)
+            analyzed_risks = self._risk_agent.analyze_risks(
+                generated_plan, structured_tree, response_language=response_lang
+            )
             state["risk_analysis"] = analyzed_risks.model_dump()
             state["agent_flow"].append("risk")
         except Exception as e:
@@ -347,7 +365,8 @@ class AdvisorWorkflow:
         # Report
         try:
             final_report = self._report_agent.generate_report(
-                discovery_result, structured_tree, generated_plan
+                discovery_result, structured_tree, generated_plan,
+                response_language=response_lang
             )
             state["business_report"] = final_report.model_dump()
             state["agent_flow"].append("report")
